@@ -1,0 +1,16 @@
+{
+  "background_color": "#ffffff",
+  "display": "standalone",
+  "lang": "en",
+  "name": "FiTsHiS",
+  "short_name": "FiTsHiS",
+  "start_url": "/?utm_source=web_app_manifest",
+  "related_applications": [
+    {
+      "platform": "play",
+      "url": "http://play.google.com/store/apps/details?id=com.fitsch1991.hotelapp",
+      "id": "com.fitsch1991.hotelapp"
+    }
+  ],
+  "prefer_related_applications": true
+}
