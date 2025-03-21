@@ -1,6 +1,6 @@
 {
   "files": {
-    "main.js": "/Oberraut/static/js/main.0a724daf.js",
+    "main.js": "/Oberraut/static/js/main.dff2c808.js",
     "static/js/732.783bc47a.chunk.js": "/Oberraut/static/js/732.783bc47a.chunk.js",
     "static/js/624.9f4ac9bf.js": "/Oberraut/static/js/624.9f4ac9bf.js",
     "static/media/logo.png": "/Oberraut/static/media/logo.dd0213c004f3f047ac5b.png",
@@ -11,12 +11,12 @@
     "favicon-16.png": "/Oberraut/favicon-16.png",
     "manifest.json": "/Oberraut/manifest.json",
     "serve.json": "/Oberraut/serve.json",
-    "main.0a724daf.js.map": "/Oberraut/static/js/main.0a724daf.js.map",
+    "main.dff2c808.js.map": "/Oberraut/static/js/main.dff2c808.js.map",
     "732.783bc47a.chunk.js.map": "/Oberraut/static/js/732.783bc47a.chunk.js.map",
     "624.9f4ac9bf.js.map": "/Oberraut/static/js/624.9f4ac9bf.js.map"
   },
   "entrypoints": [
     "static/js/624.9f4ac9bf.js",
-    "static/js/main.0a724daf.js"
+    "static/js/main.dff2c808.js"
   ]
 }
