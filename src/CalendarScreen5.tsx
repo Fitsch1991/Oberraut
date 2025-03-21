@@ -1,4 +1,10 @@
-import React, { useEffect, useMemo, useState, useRef, useCallback } from 'react';
+import React, {
+  useEffect,
+  useMemo,
+  useState,
+  useRef,
+  useCallback,
+} from 'react';
 import {
   View,
   Text,
@@ -8,7 +14,7 @@ import {
   TextInput,
   Button,
   Alert,
-  Dimensions,
+  Platform,
 } from 'react-native';
 import { supabase } from '../supabaseClient';
 import BookingFormModal from '../components/BookingFormModal';
@@ -33,7 +39,7 @@ export type Buchung = {
   anzahl_personen: number;
   preis_pro_person: number;
   anzahlung: number;
-  status: string;
+  status: string; // 'belegt' | 'anzahlung' | 'anzahlung_bezahlt' | 'booking' | ...
   verpflegung: string | null;
   hund: boolean | null;
   zusatz_preis: string;
@@ -41,22 +47,16 @@ export type Buchung = {
   notiz?: string;
   created_at: string;
   updated_at: string;
-  deleted_at?: string; // Neu: Soft-Delete-Feld
 };
 
 type Gast = {
   id: number;
   vorname: string;
   nachname: string;
+  // Weitere Felder ...
 };
 
 export type Data = {
-  date: Date;
-  dayNumber: string;
-  monthYear: string;
-};
-
-export type DayCellData = {
   date: Date;
   dayNumber: string;
   monthYear: string;
@@ -67,13 +67,11 @@ const DAY_WIDTH = 60;
 const FIXED_WIDTH = 80;
 const ROW_HEIGHT = 35;
 
-// Bildschirmdimensionen
-const { width: screenWidth } = Dimensions.get('window');
-const isSmallScreen = screenWidth < 400;
-
 // --- HILFSFUNKTIONEN ---
 function parseDate(dateStr: string): Date {
-  return dateStr.includes('T') ? new Date(dateStr) : new Date(dateStr + 'T00:00:00');
+  return dateStr.includes('T')
+    ? new Date(dateStr)
+    : new Date(dateStr + 'T00:00:00');
 }
 
 function isSameDay(d1: Date, d2: Date): boolean {
@@ -96,11 +94,18 @@ function formatDayCellData(date: Date): DayCellData {
   return { date: new Date(date), dayNumber, monthYear };
 }
 
+/*
+  generateDaysArray:
+  - Startdatum: aktueller Tag minus "pastDays" (initial 10 Tage)
+  - Enddatum: aktueller Tag plus "futureMonths" (initial 6 Monate)
+  Die Funktion generiert ein Array von DayCellData zwischen Start und End.
+*/
 function generateDaysArray(pastDays: number, futureMonths: number): DayCellData[] {
   const startDate = new Date();
   startDate.setDate(startDate.getDate() - pastDays);
   const endDate = new Date();
   endDate.setMonth(endDate.getMonth() + futureMonths);
+
   const result: DayCellData[] = [];
   let current = new Date(startDate);
   while (current <= endDate) {
@@ -110,20 +115,26 @@ function generateDaysArray(pastDays: number, futureMonths: number): DayCellData[
   return result;
 }
 
-function isIntervalAvailableForzimmer(
-  zimmerId: number | null,
+// Prüft, ob das Intervall [start, end] für einen bestimmten Raum verfügbar ist.
+// Überschneidungen sind verboten, außer wenn das Ende exakt einem bestehenden Check‑in
+// oder der Start exakt einem bestehenden Check‑out entspricht.
+function isIntervalAvailableForRoom(
+  roomId: number | null,
   start: Date,
   end: Date,
   bookings: Buchung[]
 ): boolean {
-  if (!zimmerId) return false;
+  if (!roomId) return false;
   if (start.getTime() === end.getTime()) return true;
   for (const booking of bookings) {
-    if (booking.zimmer_id !== zimmerId) continue;
+    if (booking.zimmer_id !== roomId) continue;
     const bookingStart = parseDate(booking.check_in);
     const bookingEnd = parseDate(booking.check_out);
     if (start < bookingEnd && end > bookingStart) {
-      if (end.getTime() === bookingStart.getTime() || start.getTime() === bookingEnd.getTime()) {
+      if (
+        end.getTime() === bookingStart.getTime() ||
+        start.getTime() === bookingEnd.getTime()
+      ) {
         continue;
       }
       return false;
@@ -132,7 +143,12 @@ function isIntervalAvailableForzimmer(
   return true;
 }
 
-function getBuchungForDay(dayData: DayCellData, zimmerId: number, buchungen: Buchung[]): Buchung | null {
+// Liefert eine bestehende Buchung für einen Tag (Check‑out wird nicht blockiert)
+function getBuchungForDay(
+  dayData: DayCellData,
+  zimmerId: number,
+  buchungen: Buchung[]
+): Buchung | null {
   return (
     buchungen.find((b) => {
       if (b.zimmer_id !== zimmerId) return false;
@@ -151,34 +167,36 @@ type DayCellProps = {
   onPress: () => void;
 };
 
-const DayCell = React.memo<DayCellProps>(({ day, isSelected, existingBooking, onPress }) => {
-  return (
-    <TouchableOpacity
-      style={[
-        styles.dayCell,
-        { width: DAY_WIDTH, height: ROW_HEIGHT },
-        existingBooking && { backgroundColor: 'transparent' },
-        isSelected && styles.selectedDayCell,
-      ]}
-      onPress={onPress}
-    >
-      <Text style={styles.dayCellText}>{day.dayNumber}</Text>
-    </TouchableOpacity>
-  );
-});
+const DayCell = React.memo<DayCellProps>(
+  ({ day, isSelected, existingBooking, onPress }) => {
+    return (
+      <TouchableOpacity
+        style={[
+          styles.dayCell,
+          { width: DAY_WIDTH, height: ROW_HEIGHT },
+          existingBooking && { backgroundColor: 'transparent' },
+          isSelected && styles.selectedDayCell,
+        ]}
+        onPress={onPress}
+      >
+        <Text style={styles.dayCellText}>{day.dayNumber}</Text>
+      </TouchableOpacity>
+    );
+  }
+);
 
-// --- BookingBlockRow-Komponente ---
+// --- Komponente für dynamische Buchungsblöcke ---
 type BookingBlockRowProps = {
-  zimmer: Zimmer;
+  room: Zimmer;
   bookings: Buchung[];
   daysArray: DayCellData[];
   gaeste: Gast[];
   onPressBooking: (b: Buchung) => void;
-  highlightedBookingId?: number | null;
 };
 
 const BookingBlockRow = React.memo((props: BookingBlockRowProps) => {
-  const { zimmer, bookings, daysArray, gaeste, onPressBooking, highlightedBookingId } = props;
+  const { room, bookings, daysArray, gaeste, onPressBooking } = props;
+
   return (
     <View style={styles.overlayContainer}>
       {bookings.map((b) => {
@@ -186,9 +204,12 @@ const BookingBlockRow = React.memo((props: BookingBlockRowProps) => {
         const endDate = parseDate(b.check_out);
         const startIndex = findDayIndex(startDate, daysArray);
         const endIndex = findDayIndex(endDate, daysArray);
+
         if (startIndex < 0 || endIndex < 0) return null;
+
         let blockLeft = startIndex * DAY_WIDTH;
         let blockWidth = (endIndex - startIndex + 1) * DAY_WIDTH;
+
         if (startIndex === endIndex) {
           blockLeft += DAY_WIDTH / 2;
           blockWidth = DAY_WIDTH / 2;
@@ -196,24 +217,36 @@ const BookingBlockRow = React.memo((props: BookingBlockRowProps) => {
           blockLeft += DAY_WIDTH / 2;
           blockWidth -= DAY_WIDTH;
         }
+
         const guest = gaeste.find((g) => g.id === b.gast_id);
         const guestName = guest ? `${guest.vorname} ${guest.nachname}` : 'Unbekannt';
+
         let verpflegungAbbr = '';
         if (b.verpflegung === 'Frühstück') verpflegungAbbr = 'B&B';
         else if (b.verpflegung === 'Halbpension') verpflegungAbbr = 'HP';
         else if (b.verpflegung) verpflegungAbbr = b.verpflegung;
+
         const label = `${guestName} (${b.anzahl_personen}P) ${verpflegungAbbr}`;
+
         let blockColor = '#ccffcc';
         if (b.status === 'belegt') blockColor = '#ffcccc';
         else if (b.status === 'anzahlung') blockColor = '#ffffcc';
         else if (b.status === 'booking') blockColor = '#ccccff';
+
         return (
-          <TouchableOpacity key={b.id} activeOpacity={0.8} onPress={() => onPressBooking(b)}>
+          <TouchableOpacity
+            key={b.id}
+            activeOpacity={0.8}
+            onPress={() => onPressBooking(b)}
+          >
             <View
               style={[
                 styles.bookingBlock,
-                { left: blockLeft, width: blockWidth, backgroundColor: blockColor },
-                highlightedBookingId === b.id && { borderWidth: 3, borderColor: 'black' },
+                {
+                  left: blockLeft,
+                  width: blockWidth,
+                  backgroundColor: blockColor,
+                },
               ]}
             >
               <Text style={styles.bookingBlockText} numberOfLines={2}>
@@ -227,200 +260,235 @@ const BookingBlockRow = React.memo((props: BookingBlockRowProps) => {
   );
 });
 
-// --- Hauptkomponente ---
-export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: Buchung[]; onRefresh: () => void; }) {
-  const [localBuchungen, setLocalBuchungen] = useState<Buchung[]>([]);
+// --- HAUPTKOMPONENTE ---
+export default function CalendarScreen1({
+  buchungen,
+  onRefresh,
+}: {
+  buchungen: Buchung[];
+  onRefresh: () => void;
+}) {
+  const [localBuchungen, setLocalBuchungen] = useState<Buchung[]>(buchungen);
+
+  // Initial: 10 Tage in der Vergangenheit, 6 Monate in der Zukunft
   const [pastDays, setPastDays] = useState(10);
   const [futureMonths, setFutureMonths] = useState(6);
+
   const [zimmer, setZimmer] = useState<Zimmer[]>([]);
   const [gaeste, setGaeste] = useState<Gast[]>([]);
+
   const [selectedCheckIn, setSelectedCheckIn] = useState<DayCellData | null>(null);
   const [selectedCheckOut, setSelectedCheckOut] = useState<DayCellData | null>(null);
-  const [selectedzimmerId, setSelectedzimmerId] = useState<number | null>(null);
-  const [highlightedBookingId, setHighlightedBookingId] = useState<number | null>(null);
-  const [currentSearchIndex, setCurrentSearchIndex] = useState(0);
+  const [selectedRoomId, setSelectedRoomId] = useState<number | null>(null);
+
+  // Modals
   const [isBookingModalVisible, setBookingModalVisible] = useState(false);
   const [isBookingEditModalVisible, setBookingEditModalVisible] = useState(false);
   const [selectedBooking, setSelectedBooking] = useState<BookingData | null>(null);
+
+  // Eingabe
   const [guestInput, setGuestInput] = useState('');
   const [personCountInput, setPersonCountInput] = useState('');
   const [searchQuery, setSearchQuery] = useState('');
+
   const [displayedDate, setDisplayedDate] = useState(new Date());
   const scrollViewRef = useRef<ScrollView>(null);
   const lastRefreshTimeRef = useRef<number>(0);
-  const monthAbbreviations = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-  const daysArray = useMemo(() => generateDaysArray(pastDays, futureMonths), [pastDays, futureMonths]);
 
+  const monthAbbreviations = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+
+  // Erzeuge Days-Array basierend auf pastDays und futureMonths
+  const daysArray = useMemo(() => {
+    return generateDaysArray(pastDays, futureMonths);
+  }, [pastDays, futureMonths]);
+
+  // Zimmer / Gäste laden
   const fetchData = useCallback(async () => {
     try {
       const { data: zimmerData } = await supabase.from('zimmer').select('*');
       if (zimmerData) setZimmer(zimmerData as Zimmer[]);
-      // Gäste laden: nur aktive Datensätze (falls auch hier ein Soft Delete genutzt wird)
-      const { data: gaesteData } = await supabase.from('gaeste').select('*').is('deleted_at', null);
+      const { data: gaesteData } = await supabase.from('gaeste').select('*');
       if (gaesteData) setGaeste(gaesteData as Gast[]);
     } catch (error) {
       console.error('Fehler beim Laden von Zimmern/Gästen:', error);
     }
   }, []);
 
-  // Refresh-Intervall auf 45 Sekunden
   useEffect(() => {
     fetchData();
-    const intervalId = setInterval(fetchData, 45000);
+    const intervalId = setInterval(fetchData, 120000);
     return () => clearInterval(intervalId);
   }, [fetchData]);
 
-  // Lokale Buchungen: Hier filtern wir nur Buchungen, die nicht soft-deleted sind.
+  // Buchungen aktualisieren
   useEffect(() => {
-    setLocalBuchungen(buchungen.filter(b => !b.deleted_at));
+    setLocalBuchungen(buchungen);
   }, [buchungen]);
 
   useFocusEffect(
     useCallback(() => {
       const now = Date.now();
-      if (now - lastRefreshTimeRef.current > 45000) {
+      if (now - lastRefreshTimeRef.current > 30000) {
         onRefresh();
         lastRefreshTimeRef.current = now;
       }
     }, [onRefresh])
   );
 
-  const handleScroll = useCallback((event: any) => {
-    const xOffset = event.nativeEvent.contentOffset.x;
-    const visibleWidth = event.nativeEvent.layoutMeasurement.width;
-    const centerX = xOffset + visibleWidth / 2;
-    const index = Math.floor(centerX / DAY_WIDTH);
-    if (index >= 0 && index < daysArray.length) {
-      const newDate = daysArray[index].date;
-      if (
-        newDate.getMonth() !== displayedDate.getMonth() ||
-        newDate.getFullYear() !== displayedDate.getFullYear()
-      ) {
-        setDisplayedDate(newDate);
+  // Scroll -> Datum in Mitte (funktioniert weiterhin beim manuellen Scrollen)
+  const handleScroll = useCallback(
+    (event: any) => {
+      const xOffset = event.nativeEvent.contentOffset.x;
+      const visibleWidth = event.nativeEvent.layoutMeasurement.width;
+      const centerX = xOffset + visibleWidth / 2;
+      const index = Math.floor(centerX / DAY_WIDTH);
+      if (index >= 0 && index < daysArray.length) {
+        const newDate = daysArray[index].date;
+        if (
+          newDate.getMonth() !== displayedDate.getMonth() ||
+          newDate.getFullYear() !== displayedDate.getFullYear()
+        ) {
+          setDisplayedDate(newDate);
+        }
       }
-    }
-  }, [daysArray, displayedDate]);
+    },
+    [daysArray, displayedDate]
+  );
 
-  const scrollToMonth = useCallback((targetDate: Date) => {
-    if (daysArray.length === 0 || !scrollViewRef.current) return;
-    const targetIndex = daysArray.findIndex(
-      (d) =>
-        d.date.getFullYear() === targetDate.getFullYear() &&
-        d.date.getMonth() === targetDate.getMonth()
-    );
-    if (targetIndex !== -1) {
-      const offsetX = FIXED_WIDTH + targetIndex * DAY_WIDTH;
-      scrollViewRef.current.scrollTo({ x: offsetX, animated: true });
-    }
-  }, [daysArray]);
+  const scrollToMonth = useCallback(
+    (targetDate: Date) => {
+      if (daysArray.length === 0 || !scrollViewRef.current) return;
+      const targetIndex = daysArray.findIndex(
+        (d) =>
+          d.date.getFullYear() === targetDate.getFullYear() &&
+          d.date.getMonth() === targetDate.getMonth()
+      );
+      if (targetIndex !== -1) {
+        const offsetX = FIXED_WIDTH + targetIndex * DAY_WIDTH;
+        scrollViewRef.current.scrollTo({ x: offsetX, animated: true });
+      }
+    },
+    [daysArray]
+  );
 
-  const handleMonthButtonPress = useCallback((monthIndex: number) => {
-    const currentYear = displayedDate.getFullYear();
-    const newDate = new Date(currentYear, monthIndex, 1);
-    setDisplayedDate(newDate);
-    scrollToMonth(newDate);
-  }, [displayedDate, scrollToMonth]);
+  const handleMonthButtonPress = useCallback(
+    (monthIndex: number) => {
+      const currentYear = displayedDate.getFullYear();
+      const newDate = new Date(currentYear, monthIndex, 1);
+      setDisplayedDate(newDate);
+      scrollToMonth(newDate);
+    },
+    [displayedDate, scrollToMonth]
+  );
 
+  // Erweiterungsfunktionen:
+  // Für die Vergangenheit: Bei jedem Klick werden ca. 3 Monate (90 Tage) zusätzlich angezeigt.
   const addBackwardExtension = useCallback(() => setPastDays(prev => prev + 90), []);
+  // Für die Zukunft: Bei jedem Klick werden 3 Monate hinzugefügt.
   const addForwardExtension = useCallback(() => setFutureMonths(prev => prev + 3), []);
 
-  const handleDayPress = useCallback((day: DayCellData, zimmerId: number) => {
-    if (!selectedCheckIn) {
-      if (!isIntervalAvailableForzimmer(zimmerId, day.date, day.date, localBuchungen)) return;
-      setSelectedzimmerId(zimmerId);
-      setSelectedCheckIn(day);
-      setSelectedCheckOut(day);
-      return;
-    }
-    if (selectedzimmerId !== zimmerId) {
-      if (!isIntervalAvailableForzimmer(zimmerId, day.date, day.date, localBuchungen)) return;
-      setSelectedzimmerId(zimmerId);
-      setSelectedCheckIn(day);
-      setSelectedCheckOut(day);
-      return;
-    }
-    if (isSameDay(day.date, selectedCheckIn.date)) {
-      setSelectedCheckOut(day);
-      return;
-    }
-    if (day.date >= selectedCheckIn.date) {
-      const isAvailable = isIntervalAvailableForzimmer(zimmerId, selectedCheckIn.date, day.date, localBuchungen);
-      const bookingAtDay = getBuchungForDay(day, zimmerId, localBuchungen);
-      if (isAvailable || (bookingAtDay && isSameDay(day.date, parseDate(bookingAtDay.check_in)))) {
+  // Angepasste Logik beim Auswählen der Tageszellen:
+  const handleDayPress = useCallback(
+    (day: DayCellData, roomId: number) => {
+      // Falls noch kein Check‑in gesetzt ist, müssen wir sicherstellen,
+      // dass der Tag als Check‑in frei ist (d.h. keine Buchung mit Check‑in an diesem Tag).
+      if (!selectedCheckIn) {
+        if (!isIntervalAvailableForRoom(roomId, day.date, day.date, localBuchungen)) {
+          return;
+        }
+        setSelectedRoomId(roomId);
+        setSelectedCheckIn(day);
         setSelectedCheckOut(day);
         return;
-      } else {
-        Alert.alert("Das Intervall ist nicht verfügbar.");
+      }
+      // Falls ein anderer Raum ausgewählt wurde, setzen wir neu.
+      if (selectedRoomId !== roomId) {
+        if (!isIntervalAvailableForRoom(roomId, day.date, day.date, localBuchungen)) {
+          return;
+        }
+        setSelectedRoomId(roomId);
+        setSelectedCheckIn(day);
+        setSelectedCheckOut(day);
         return;
       }
-    }
-    setSelectedCheckIn(day);
+      // Wenn der geklickte Tag exakt gleich wie der bereits gewählte Check‑in ist,
+      // interpretieren wir den Klick als Versuch, den Check‑out zu setzen.
+      if (isSameDay(day.date, selectedCheckIn.date)) {
+        setSelectedCheckOut(day);
+        return;
+      }
+      // Wenn der geklickte Tag nach dem Check‑in liegt, prüfen wir das Intervall.
+      if (day.date >= selectedCheckIn.date) {
+  const isAvailable = isIntervalAvailableForRoom(roomId, selectedCheckIn.date, day.date, localBuchungen);
+  const bookingAtDay = getBuchungForDay(day, roomId, localBuchungen);
+
+  if (isAvailable || (bookingAtDay && isSameDay(day.date, parseDate(bookingAtDay.check_in)))) {
     setSelectedCheckOut(day);
-  }, [selectedCheckIn, localBuchungen, selectedzimmerId]);
+    return;
+  } else {
+    Alert.alert("Das Intervall ist nicht verfügbar.");
+    return;
+  }
+      }
+      // Wenn ein Tag vor dem aktuellen Check‑in gewählt wird, setzen wir neu.
+      setSelectedCheckIn(day);
+      setSelectedCheckOut(day);
+    },
+    [selectedCheckIn, localBuchungen, selectedRoomId]
+  );
 
   const handleSearch = useCallback(() => {
     if (!searchQuery.trim()) return;
     const lowerQuery = searchQuery.toLowerCase();
-    const matches = localBuchungen.filter((b) => {
+    const matchingBooking = localBuchungen.find((b) => {
       const guest = gaeste.find((g) => g.id === b.gast_id);
       if (!guest) return false;
       const fullName = `${guest.vorname} ${guest.nachname}`.toLowerCase();
       return fullName.includes(lowerQuery);
-    }).map((b) => b.id);
-    if (matches.length > 0) {
-      const index = currentSearchIndex % matches.length;
-      const bookingId = matches[index];
-      setHighlightedBookingId(bookingId);
-      setCurrentSearchIndex(currentSearchIndex + 1);
-      const matchingBooking = localBuchungen.find(b => b.id === bookingId);
-      if (matchingBooking) {
-        const checkInDate = parseDate(matchingBooking.check_in);
-        const dayIndex = findDayIndex(checkInDate, daysArray);
-        if (dayIndex !== -1 && scrollViewRef.current) {
-          const offsetX = FIXED_WIDTH + dayIndex * DAY_WIDTH;
-          scrollViewRef.current.scrollTo({ x: offsetX, animated: true });
-        }
+    });
+    if (matchingBooking) {
+      const checkInDate = parseDate(matchingBooking.check_in);
+      const index = findDayIndex(checkInDate, daysArray);
+      if (index !== -1 && scrollViewRef.current) {
+        const offsetX = FIXED_WIDTH + index * DAY_WIDTH;
+        scrollViewRef.current.scrollTo({ x: offsetX, animated: true });
       }
-    } else {
-      setHighlightedBookingId(null);
-      setCurrentSearchIndex(0);
     }
-  }, [searchQuery, localBuchungen, gaeste, daysArray, currentSearchIndex]);
+  }, [searchQuery, localBuchungen, gaeste, daysArray]);
 
   const openBookingModal = useCallback(() => {
-    if (!selectedCheckIn || !selectedCheckOut || selectedzimmerId === null) {
+    if (!selectedCheckIn || !selectedCheckOut || selectedRoomId === null) {
       Alert.alert('Bitte Check‑In und Check‑Out auswählen.');
       return;
     }
-    if (!isSameDay(selectedCheckIn.date, selectedCheckOut.date)) {
-      setBookingModalVisible(true);
-    } else {
-      Alert.alert('Bitte wählen Sie unterschiedliche Tage für Check‑In und Check‑Out aus.');
-    }
-  }, [selectedCheckIn, selectedCheckOut, selectedzimmerId]);
+    setBookingModalVisible(true);
+  }, [selectedCheckIn, selectedCheckOut, selectedRoomId]);
 
-  const handleBookingPress = useCallback((b: Buchung) => {
-    const guest = gaeste.find((g) => g.id === b.gast_id);
-    const bookingData: BookingData = {
-      id: b.id,
-      zimmer_id: b.zimmer_id,
-      guestName: guest ? `${guest.vorname} ${guest.nachname}` : 'Unbekannt',
-      personCount: b.anzahl_personen,
-      checkIn: b.check_in,
-      checkOut: b.check_out,
-      status: b.status,
-      anzahlung: b.anzahlung,
-      verpflegung: b.verpflegung || '',
-      preisProPerson: b.preis_pro_person,
-      hund: b.hund || false,
-      zusatz_preis: b.zusatz_preis,
-      tel_email: b.tel_email,
-      notiz: b.notiz || '',
-      zimmerNumber: zimmer.find((z) => z.id === b.zimmer_id)?.nummer || '',
-    };
-    setSelectedBooking(bookingData);
-    setBookingEditModalVisible(true);
-  }, [gaeste, zimmer]);
+  const handleBookingPress = useCallback(
+    (b: Buchung) => {
+      const guest = gaeste.find((g) => g.id === b.gast_id);
+      const bookingData: BookingData = {
+        id: b.id,
+        zimmer_id: b.zimmer_id,
+        guestName: guest ? `${guest.vorname} ${guest.nachname}` : 'Unbekannt',
+        personCount: b.anzahl_personen,
+        checkIn: b.check_in,
+        checkOut: b.check_out,
+        status: b.status,
+        anzahlung: b.anzahlung,
+        verpflegung: b.verpflegung || '',
+        preisProPerson: b.preis_pro_person,
+        hund: b.hund || false,
+        zusatz_preis: b.zusatz_preis,
+        tel_email: b.tel_email,
+        notiz: b.notiz || '',
+        roomNumber: zimmer.find((z) => z.id === b.zimmer_id)?.nummer || '',
+      };
+      setSelectedBooking(bookingData);
+      setBookingEditModalVisible(true);
+    },
+    [gaeste, zimmer]
+  );
 
   const handleBookingSubmit = useCallback(
     async (data: {
@@ -435,12 +503,13 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
       notiz: string;
       tel_email: string;
     }) => {
-      if (!selectedCheckIn || !selectedCheckOut || selectedzimmerId === null) {
+      if (!selectedCheckIn || !selectedCheckOut || selectedRoomId === null) {
         Alert.alert('Fehler', 'Bitte Check‑In, Check‑Out und Zimmer auswählen.');
         return;
       }
       const checkInDate = selectedCheckIn.date.toISOString().split('T')[0];
       const checkOutDate = selectedCheckOut.date.toISOString().split('T')[0];
+
       const nameParts = data.guestName.trim().split(' ');
       if (nameParts.length < 2) {
         Alert.alert('Fehler', 'Bitte Vor‑ und Nachname eingeben.');
@@ -449,64 +518,59 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
       let guestId: number | null = null;
       const { data: existingGuest } = await supabase
         .from('gaeste')
-        .select('id, vorname, nachname')
+        .select('id')
         .eq('vorname', nameParts[0])
         .eq('nachname', nameParts[1]);
       if (existingGuest && existingGuest.length > 0) {
         guestId = existingGuest[0].id;
       } else {
-        const { data: newGuest, error: guestError } = await supabase
+        const { data: newGuest } = await supabase
           .from('gaeste')
           .insert([{ vorname: nameParts[0], nachname: nameParts[1] }])
           .select('*')
           .single();
-        if (guestError || !newGuest) {
+        if (!newGuest) {
           Alert.alert('Fehler', 'Gast konnte nicht erstellt werden.');
           return;
         }
         guestId = newGuest.id;
       }
-      const { data: newBooking, error: bookingError } = await supabase
-        .from('buchungen')
-        .insert([
-          {
-            zimmer_id: selectedzimmerId,
-            gast_id: guestId,
-            check_in: checkInDate,
-            check_out: checkOutDate,
-            anzahl_personen: data.personCount,
-            preis_pro_person: data.preisProPerson ?? 0,
-            anzahlung: data.anzahlung,
-            status: data.status,
-            verpflegung: data.verpflegung,
-            hund: data.hund,
-            zusatz_preis: data.zusatzPreis,
-            tel_email: data.tel_email,
-            notiz: data.notiz,
-          }
-        ])
-        .select('*')
-        .single();
-      if (bookingError || !newBooking) {
-        Alert.alert('Fehler', bookingError?.message || 'Buchung konnte nicht erstellt werden.');
-        return;
+
+      const { error } = await supabase.from('buchungen').insert([
+        {
+          zimmer_id: selectedRoomId,
+          gast_id: guestId,
+          check_in: checkInDate,
+          check_out: checkOutDate,
+          anzahl_personen: data.personCount,
+          preis_pro_person: data.preisProPerson ?? 0,
+          anzahlung: data.anzahlung,
+          status: data.status,
+          verpflegung: data.verpflegung,
+          hund: data.hund,
+          zusatz_preis: data.zusatzPreis,
+          tel_email: data.tel_email,
+          notiz: data.notiz,
+        },
+      ]);
+      if (error) {
+        Alert.alert('Fehler', error.message);
+      } else {
+        Alert.alert('Erfolg', 'Buchung erstellt!');
+        setSelectedRoomId(null);
+        setSelectedCheckIn(null);
+        setSelectedCheckOut(null);
+        await onRefresh();
+        await fetchData(); // Gästeliste sofort aktualisieren
       }
-      Alert.alert('Erfolg', 'Buchung erstellt!');
-      setSelectedzimmerId(null);
-      setSelectedCheckIn(null);
-      setSelectedCheckOut(null);
-      setTimeout(() => {
-        onRefresh();
-        fetchData();
-      }, 200);
     },
-    [selectedCheckIn, selectedCheckOut, selectedzimmerId, onRefresh, fetchData]
+    [selectedCheckIn, selectedCheckOut, selectedRoomId, onRefresh, fetchData]
   );
 
   const handleBookingUpdate = useCallback(
     async (updatedBooking: BookingData) => {
       await onRefresh();
-      await fetchData();
+      await fetchData(); // Gästeliste auch nach Aktualisierungen neu laden
       setBookingEditModalVisible(false);
       setSelectedBooking(null);
     },
@@ -515,62 +579,49 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
 
   const handleBookingDelete = useCallback(
     async (bookingId: number) => {
-      // Bei Soft Delete wird deleted_at aktualisiert statt die Buchung zu löschen.
-      const { error } = await supabase
-        .from('buchungen')
-        .update({ deleted_at: new Date().toISOString() })
-        .eq('id', bookingId);
-      if (error) {
-        Alert.alert('Fehler', error.message);
-      } else {
-        Alert.alert('Erfolg', 'Buchung wurde soft-deleted!');
-        await onRefresh();
-        await fetchData();
-        setBookingEditModalVisible(false);
-        setSelectedBooking(null);
-      }
+      await onRefresh();
+      await fetchData();
+      setBookingEditModalVisible(false);
+      setSelectedBooking(null);
     },
     [onRefresh, fetchData]
   );
 
   return (
     <View style={styles.container}>
-      <Header title="Zimmer-Kalender" />
+      <Header />
 
-      <View style={styles.controlsContainer}>
+  <Header title="Zimmer-Kalender" />
+
+      {/* Obere Monats-/Jahresanzeige */}
+      <View style={styles.monthYearContainer}>
+        <View style={{ flex: 1, alignItems: 'center' }}>
+          <Text style={styles.monthYearText}>
+            {displayedDate.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}
+          </Text>
+        </View>
+      </View>
+
+      {/* Erweiterungsbuttons für Vergangenheit und Zukunft */}
+      <View style={styles.extensionButtonsContainer}>
         <Button title="-3 Monate" onPress={addBackwardExtension} />
-        <Text style={styles.monthYearText}>
-          {displayedDate.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' })}
-        </Text>
         <Button title="+3 Monate" onPress={addForwardExtension} />
       </View>
 
-      <View style={styles.monthButtonsContainer}>
-        {monthAbbreviations.map((abbr, index) => (
-          <TouchableOpacity
-            key={index}
-            style={styles.monthButton}
-            onPress={() => handleMonthButtonPress(index)}
-          >
-            <Text style={styles.monthButtonText}>
-              {isSmallScreen ? abbr.substring(0, 2) : abbr}
-            </Text>
-          </TouchableOpacity>
-        ))}
-      </View>
-
       <View style={styles.tableContainer}>
+        {/* Fixe Spalte: Zimmer */}
         <View style={styles.fixedColumn}>
           <View style={[styles.headerCell, styles.leftHeaderCell]}>
-            <Text style={styles.headerCellText}>Zimmer</Text>
+            <Text style={styles.headerText}>Zimmer</Text>
           </View>
-          {zimmer.map((zimmer) => (
-            <View key={zimmer.id} style={styles.zimmerCell}>
-              <Text style={styles.zimmerText}>Z. {zimmer.nummer}</Text>
+          {zimmer.map((room) => (
+            <View key={room.id} style={styles.roomCell}>
+              <Text style={styles.roomText}>Z. {room.nummer}</Text>
             </View>
           ))}
         </View>
 
+        {/* Horizontal scrollbarer Bereich */}
         <ScrollView
           horizontal
           style={styles.horizontalScroll}
@@ -579,6 +630,7 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
           scrollEventThrottle={16}
         >
           <View>
+            {/* Tage-Header */}
             <View style={styles.headerRow}>
               {daysArray.map((day) => {
                 const isToday = isSameDay(day.date, new Date());
@@ -597,21 +649,22 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
                     <Text style={styles.headerSmallText}>
                       {weekday} {day.monthYear}
                     </Text>
-                    <Text style={styles.headerDayNumber}>{day.dayNumber}</Text>
+                    <Text style={styles.headerText}>{day.dayNumber}</Text>
                   </View>
                 );
               })}
             </View>
 
-            {zimmer.map((zimmer) => (
-              <View key={zimmer.id} style={{ position: 'relative', height: ROW_HEIGHT }}>
-                <View style={styles.zimmerRow}>
+            {/* Raumzeilen */}
+            {zimmer.map((room) => (
+              <View key={room.id} style={{ position: 'relative', height: ROW_HEIGHT }}>
+                <View style={styles.roomRow}>
                   {daysArray.map((day) => {
                     const isSelected =
-                      selectedzimmerId === zimmer.id &&
+                      selectedRoomId === room.id &&
                       ((selectedCheckIn && isSameDay(day.date, selectedCheckIn.date)) ||
                         (selectedCheckOut && isSameDay(day.date, selectedCheckOut.date)));
-                    const existingBooking = getBuchungForDay(day, zimmer.id, localBuchungen);
+                    const existingBooking = getBuchungForDay(day, room.id, localBuchungen);
                     return (
                       <DayCell
                         key={day.date.toISOString()}
@@ -619,28 +672,49 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
                         isSelected={isSelected}
                         existingBooking={existingBooking}
                         onPress={() => {
-                          if (!selectedCheckIn) {
-                            if (!existingBooking) handleDayPress(day, zimmer.id);
-                          } else {
-                            handleDayPress(day, zimmer.id);
-                          }
-                        }}
+  const existingCheckInDate = existingBooking ? parseDate(existingBooking.check_in) : null;
+
+  if (!selectedCheckIn) {
+    // Kein Check-In gesetzt: Nur komplett freie Zellen auswählbar
+    if (!existingBooking) {
+      handleDayPress(day, room.id);
+    }
+  } else {
+    // Check-In bereits gesetzt:
+    // Check-Out darf frei sein ODER exakt am Check-In einer bestehenden Buchung liegen
+    if (!existingBooking || isSameDay(day.date, existingCheckInDate)) {
+      handleDayPress(day, room.id);
+    }
+  }
+}}
                       />
                     );
                   })}
                 </View>
+                {/* Buchungsblöcke */}
                 <BookingBlockRow
-                  zimmer={zimmer}
-                  bookings={localBuchungen.filter((b) => b.zimmer_id === zimmer.id)}
+                  room={room}
+                  bookings={localBuchungen.filter((b) => b.zimmer_id === room.id)}
                   daysArray={daysArray}
                   gaeste={gaeste}
                   onPressBooking={handleBookingPress}
-                  highlightedBookingId={highlightedBookingId}
                 />
               </View>
             ))}
           </View>
         </ScrollView>
+      </View>
+
+      <View style={styles.monthButtonsContainer}>
+        {monthAbbreviations.map((abbr, index) => (
+          <TouchableOpacity
+            key={index}
+            style={styles.monthButton}
+            onPress={() => handleMonthButtonPress(index)}
+          >
+            <Text style={styles.monthButtonText}>{abbr}</Text>
+          </TouchableOpacity>
+        ))}
       </View>
 
       <View style={styles.searchContainer}>
@@ -653,7 +727,7 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
         <Button title="Suchen" onPress={handleSearch} />
       </View>
 
-      {selectedCheckIn && selectedCheckOut && !isSameDay(selectedCheckIn.date, selectedCheckOut.date) && (
+      {selectedCheckIn && selectedCheckOut && (
         <TouchableOpacity style={styles.bookingButton} onPress={openBookingModal}>
           <Text style={styles.bookingButtonText}>Buchungsformular öffnen</Text>
         </TouchableOpacity>
@@ -668,7 +742,7 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
         initialGuestName={guestInput}
         initialPersonCount={personCountInput ? parseInt(personCountInput) : 0}
         onRefresh={onRefresh}
-        selectedzimmerId={selectedzimmerId || undefined}
+        selectedRoomId={selectedRoomId || undefined}
       />
 
       {selectedBooking && (
@@ -688,56 +762,43 @@ export default function CalendarScreen1({ buchungen, onRefresh }: { buchungen: B
   );
 }
 
+// --- STYLES ---
 const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#fff',
     paddingTop: 40,
   },
-  controlsContainer: {
+  title: {
+    fontSize: 24,
+    textAlign: 'center',
+    marginBottom: 16,
+  },
+  monthYearContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    height: 40,
+    marginBottom: 8,
     paddingHorizontal: 16,
-    backgroundColor: '#f5f5f5',
   },
   monthYearText: {
-    fontSize: 16,
+    fontSize: 20,
     fontWeight: 'bold',
   },
-  monthButtonsContainer: {
+  extensionButtonsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginVertical: 8,
+    marginBottom: 8,
     paddingHorizontal: 16,
-    backgroundColor: '#eee',
-  },
-  monthButton: {
-    paddingVertical: 6,
-    paddingHorizontal: 10,
-    borderRadius: 4,
-    backgroundColor: '#ddd',
-  },
-  monthButtonText: {
-    fontSize: 12,
-    fontWeight: '500',
   },
   tableContainer: {
+    flexDirection: 'row',
     flex: 1,
-    position: 'relative',
   },
   fixedColumn: {
     width: FIXED_WIDTH,
-    position: 'absolute',
-    left: 0,
-    top: 0,
-    bottom: 0,
-    zIndex: 1,
   },
   horizontalScroll: {
     flex: 1,
-    marginLeft: FIXED_WIDTH,
   },
   headerRow: {
     flexDirection: 'row',
@@ -753,18 +814,13 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     height: ROW_HEIGHT,
   },
+  headerText: {
+    fontWeight: 'bold',
+    fontSize: 12,
+  },
   headerSmallText: {
     fontSize: 10,
     color: '#555',
-  },
-  headerDayNumber: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#333',
-  },
-  headerCellText: {
-    fontSize: 12,
-    fontWeight: 'bold',
   },
   leftHeaderCell: {
     borderBottomWidth: 1,
@@ -776,10 +832,10 @@ const styles = StyleSheet.create({
   weekendHeader: {
     backgroundColor: '#cccccc',
   },
-  zimmerRow: {
+  roomRow: {
     flexDirection: 'row',
   },
-  zimmerCell: {
+  roomCell: {
     backgroundColor: '#fafafa',
     borderBottomWidth: 1,
     borderColor: '#ccc',
@@ -788,9 +844,8 @@ const styles = StyleSheet.create({
     height: ROW_HEIGHT,
     width: FIXED_WIDTH,
   },
-  zimmerText: {
+  roomText: {
     fontSize: 12,
-    fontWeight: 'bold',
   },
   dayCell: {
     borderRightWidth: 1,
@@ -830,6 +885,21 @@ const styles = StyleSheet.create({
     color: '#333',
     textAlign: 'center',
     flexWrap: 'wrap',
+  },
+  monthButtonsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginVertical: 8,
+  },
+  monthButton: {
+    backgroundColor: '#eee',
+    paddingVertical: 6,
+    paddingHorizontal: 10,
+    borderRadius: 4,
+  },
+  monthButtonText: {
+    fontSize: 12,
+    fontWeight: '500',
   },
   bookingButton: {
     backgroundColor: '#007AFF',

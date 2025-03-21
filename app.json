@@ -24,7 +24,17 @@
     },
     "web": {
       "favicon": "./assets/favicon.png",
-      "bundler": "webpack"
+      "bundler": "webpack",
+      "manifest": {
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#000000",
+        "start_url": "/Oberraut/"
+      },
+      "meta": {
+        "appleMobileWebAppCapable": "yes",
+        "appleMobileWebAppStatusBarStyle": "default"
+      }
     },
     "extra": {
       "eas": {

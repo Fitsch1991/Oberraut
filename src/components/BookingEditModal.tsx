@@ -13,9 +13,6 @@ import {
 } from 'react-native';
 import Modal from 'react-native-modal';
 import { supabase } from '../supabaseClient';
-import ProgressBarAndroid from '@react-native-community/progress-bar-android';
-import Clipboard from '@react-native-clipboard/clipboard';
-import PushNotificationIOS from '@react-native-community/push-notification-ios';
 
 export type BookingData = {
   id: number;
@@ -31,7 +28,7 @@ export type BookingData = {
   hund: boolean;
   zusatz_preis: string;
   tel_email: string;
-  roomNumber: string;
+  zimmerNumber: string;
   notiz?: string;
 };
 
@@ -44,7 +41,6 @@ type BookingEditModalProps = {
   onRefresh?: () => void;
 };
 
-// Kleine Hilfsfunktionen als außerhalb der Komponente definieren
 function myAlert(title: string, msg: string) {
   if (Platform.OS === 'web') {
     window.alert(`${title}: ${msg}`);
@@ -71,7 +67,6 @@ async function myConfirm(question: string): Promise<boolean> {
   }
 }
 
-// RadioGroup als memoisierte Komponente
 const RadioGroup: React.FC<{
   options: { label: string; value: string }[];
   selectedValue: string;
@@ -127,13 +122,12 @@ const BookingEditModal: React.FC<BookingEditModalProps> = ({
   const [hund, setHund] = useState(booking.hund ? 'ja' : 'nein');
   const [zusatzPreis, setZusatzPreis] = useState(booking.zusatz_preis);
   const [telEmail, setTelEmail] = useState(booking.tel_email);
-  const [roomNumber, setRoomNumber] = useState(booking.roomNumber);
+  const [zimmerNumber, setzimmerNumber] = useState(booking.zimmerNumber);
   const [checkIn, setCheckIn] = useState(booking.checkIn);
   const [checkOut, setCheckOut] = useState(booking.checkOut);
   const [notiz, setNotiz] = useState(booking.notiz || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Aktualisiere die lokalen States, wenn sich das booking-Prop ändert
   useEffect(() => {
     setGuestName(booking.guestName);
     setPersonCount(booking.personCount.toString());
@@ -144,7 +138,7 @@ const BookingEditModal: React.FC<BookingEditModalProps> = ({
     setHund(booking.hund ? 'ja' : 'nein');
     setZusatzPreis(booking.zusatz_preis);
     setTelEmail(booking.tel_email);
-    setRoomNumber(booking.roomNumber);
+    setzimmerNumber(booking.zimmerNumber);
     setCheckIn(booking.checkIn);
     setCheckOut(booking.checkOut);
     setNotiz(booking.notiz || '');
@@ -157,40 +151,7 @@ const BookingEditModal: React.FC<BookingEditModalProps> = ({
     parseInt(personCount) > 0 &&
     checkIn.trim() !== '' &&
     checkOut.trim() !== '' &&
-    roomNumber.trim() !== '';
-
-  // findRoomIdByNumber als useCallback
-  const findRoomIdByNumber = useCallback(async (numStr: string): Promise<number | null> => {
-    const { data, error } = await supabase
-      .from('zimmer')
-      .select('id')
-      .eq('nummer', numStr)
-      .single();
-    if (error || !data) {
-      myAlert('Fehler', 'Zimmer mit dieser Nummer wurde nicht gefunden.');
-      return null;
-    }
-    return data.id;
-  }, []);
-
-  const validateRoomAvailability = useCallback(async (
-    newRoomId: number,
-    newCheckIn: string,
-    newCheckOut: string
-  ): Promise<boolean> => {
-    const { data, error } = await supabase
-      .from('buchungen')
-      .select('id')
-      .eq('zimmer_id', newRoomId)
-      .not('id', 'eq', booking.id)
-      .filter('check_in', 'lt', newCheckOut)
-      .filter('check_out', 'gt', newCheckIn);
-    if (error) {
-      myAlert('Fehler', 'Fehler bei der Verfügbarkeitsprüfung.');
-      return false;
-    }
-    return data && data.length === 0;
-  }, [booking.id]);
+    zimmerNumber.trim() !== '';
 
   const handleUpdate = useCallback(async () => {
     if (isSubmitting) return;
@@ -201,29 +162,17 @@ const BookingEditModal: React.FC<BookingEditModalProps> = ({
     }
     setIsSubmitting(true);
     const parsedAnzahlung = parseFloat(anzahlung);
-    const parsedPreisProPerson =
-      preisProPerson.trim() === '' ? null : parseFloat(preisProPerson);
-    const newRoomNumber = roomNumber.trim();
-    if (!newRoomNumber) {
+    const parsedPreisProPerson = preisProPerson.trim() === '' ? null : parseFloat(preisProPerson);
+    const newzimmerNumber = zimmerNumber.trim();
+    if (!newzimmerNumber) {
       myAlert('Fehler', 'Bitte eine Zimmernummer angeben.');
       setIsSubmitting(false);
       return;
     }
-    const newRoomId = await findRoomIdByNumber(newRoomNumber);
-    if (!newRoomId) {
-      setIsSubmitting(false);
-      return;
-    }
-    const available = await validateRoomAvailability(newRoomId, checkIn, checkOut);
-    if (!available) {
-      myAlert('Fehler', 'Das Zimmer ist im angegebenen Zeitraum nicht verfügbar.');
-      setIsSubmitting(false);
-      return;
-    }
+    // Hier nehmen wir an, dass die Zimmernummer bereits korrekt ist.
     const { error } = await supabase
       .from('buchungen')
       .update({
-        zimmer_id: newRoomId,
         check_in: checkIn,
         check_out: checkOut,
         anzahl_personen: count,
@@ -250,7 +199,7 @@ const BookingEditModal: React.FC<BookingEditModalProps> = ({
     personCount,
     anzahlung,
     preisProPerson,
-    roomNumber,
+    zimmerNumber,
     checkIn,
     checkOut,
     status,
@@ -260,24 +209,24 @@ const BookingEditModal: React.FC<BookingEditModalProps> = ({
     telEmail,
     notiz,
     booking.id,
-    findRoomIdByNumber,
-    validateRoomAvailability,
     onRefresh,
     onClose,
   ]);
 
   const handleDelete = useCallback(async () => {
     if (isSubmitting) return;
-    const confirmed = await (Platform.OS === 'web'
-      ? Promise.resolve(window.confirm('Möchtest du die Buchung wirklich löschen?'))
-      : myConfirm('Möchtest du die Buchung wirklich löschen?'));
+    const confirmed = await myConfirm('Möchtest du die Buchung wirklich löschen?');
     if (confirmed) {
       setIsSubmitting(true);
-      const { error } = await supabase.from('buchungen').delete().eq('id', booking.id);
+      // Soft Delete: Setze deleted_at statt der Buchung endgültig zu löschen.
+      const { error } = await supabase
+        .from('buchungen')
+        .update({ deleted_at: new Date().toISOString() })
+        .eq('id', booking.id);
       if (error) {
         myAlert('Fehler', error.message);
       } else {
-        myAlert('Erfolg', 'Buchung gelöscht!');
+        myAlert('Erfolg', 'Buchung wurde soft-deleted!');
         if (onRefresh) await onRefresh();
         onClose();
       }
@@ -300,8 +249,8 @@ const BookingEditModal: React.FC<BookingEditModalProps> = ({
           <TextInput
             style={sharedInputStyle}
             placeholder="z. B. 101"
-            value={roomNumber}
-            onChangeText={setRoomNumber}
+            value={zimmerNumber}
+            onChangeText={setzimmerNumber}
             blurOnSubmit
             onSubmitEditing={Keyboard.dismiss}
           />

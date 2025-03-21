@@ -1,22 +1,22 @@
 {
   "files": {
-    "main.js": "/static/js/main.165ebe2b.js",
-    "static/js/732.783bc47a.chunk.js": "/static/js/732.783bc47a.chunk.js",
-    "static/js/624.9f4ac9bf.js": "/static/js/624.9f4ac9bf.js",
-    "static/media/logo.png": "/static/media/logo.dd0213c004f3f047ac5b.png",
-    "favicon.ico": "/favicon.ico",
-    "static/media/LogoBetrieb.png": "/static/media/LogoBetrieb.c5ef20b02b90bcffbb09.png",
-    "index.html": "/index.html",
-    "favicon-32.png": "/favicon-32.png",
-    "favicon-16.png": "/favicon-16.png",
-    "manifest.json": "/manifest.json",
-    "serve.json": "/serve.json",
-    "main.165ebe2b.js.map": "/static/js/main.165ebe2b.js.map",
-    "732.783bc47a.chunk.js.map": "/static/js/732.783bc47a.chunk.js.map",
-    "624.9f4ac9bf.js.map": "/static/js/624.9f4ac9bf.js.map"
+    "main.js": "/Oberraut/static/js/main.a486919d.js",
+    "static/js/732.783bc47a.chunk.js": "/Oberraut/static/js/732.783bc47a.chunk.js",
+    "static/js/624.9f4ac9bf.js": "/Oberraut/static/js/624.9f4ac9bf.js",
+    "static/media/logo.png": "/Oberraut/static/media/logo.dd0213c004f3f047ac5b.png",
+    "favicon.ico": "/Oberraut/favicon.ico",
+    "static/media/LogoBetrieb.png": "/Oberraut/static/media/LogoBetrieb.c5ef20b02b90bcffbb09.png",
+    "index.html": "/Oberraut/index.html",
+    "favicon-32.png": "/Oberraut/favicon-32.png",
+    "favicon-16.png": "/Oberraut/favicon-16.png",
+    "manifest.json": "/Oberraut/manifest.json",
+    "serve.json": "/Oberraut/serve.json",
+    "main.a486919d.js.map": "/Oberraut/static/js/main.a486919d.js.map",
+    "732.783bc47a.chunk.js.map": "/Oberraut/static/js/732.783bc47a.chunk.js.map",
+    "624.9f4ac9bf.js.map": "/Oberraut/static/js/624.9f4ac9bf.js.map"
   },
   "entrypoints": [
     "static/js/624.9f4ac9bf.js",
-    "static/js/main.165ebe2b.js"
+    "static/js/main.a486919d.js"
   ]
 }
